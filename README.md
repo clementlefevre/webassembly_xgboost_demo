@@ -21,22 +21,22 @@ As a matter of fact, intensive computing within the browser via Webassembly can 
 
 you need golang installed on your machine.
 
-### build the wasm.
+1 - build the wasm.
 
 ```bash
 $ cd xgb-wasm
 $ make
 ```
 
-### Add your own Go version specific `wasm_exec.js` file :
+2 - Add your own Go version specific `wasm_exec.js` file :
 
 ```bash
 $ cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" ./demo
 ```
 
-### And cd into the "demo" folder and execute `sheret.exe` (Windows users) to start a local server.
+3 - cd into the "demo" folder and execute `sheret.exe` (Windows users) to start a local server.
 
-### Open the browser to http://localhost:9999
+4 - open the browser at http://localhost:9999
 
 
 # Credits
