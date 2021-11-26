@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="">
+    <meta name="author" content="@vsoch">
+    <title>XGBoost Prediction Wasm</title>
+
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css">
+    <link href="https://fonts.googleapis.com/css?family=Oswald&display=swap" rel="stylesheet">
+    <style>
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6,
+        .navbar-brand {
+            font-family: 'Roboto', sans-serif;
+        }
+
+        #nav {
+            margin-top: 10px;
+            margin-bottom: 50px;
+        }
+
+        h1,
+        h2 {
+            margin-bottom: 20px
+        }
+
+        #data-table {
+            margin-bottom: 20px
+        }
+
+        #title {
+            float: right;
+            margin-top: 30px;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container" id="nav">
+        <nav class="navbar navbar-light bg-light">
+            <a class="navbar-brand" href="#">
+
+
+            </a>
+        </nav>
+    </div>
+    <div class="container">
+        <div class="row">
+            <div class="col-md-12">
+                <p class="alert alert-info" id="message" style="display:none"></p>
+            </div>
+        </div>
+
+        <div id="debugDiv" style="font-family: 'Roboto', sans-serif;"></div>
+
+    </div>
+
+    </div>
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-csv/1.0.5/jquery.csv.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.js"></script>
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/handsontable/dist/handsontable.full.min.css" rel="stylesheet">
+    <script src="wasm_exec.js"></script>
+
+    <script>
+        google.charts.load('current', { packages: ['corechart'] });
+        // google.charts.setOnLoadCallback(drawPlot);
+
+        // Download a result (text file) for the regression
+        function download() {
+            var element = document.createElement('a');
+            var text = $("#result").text()
+            var filename = $("#downloadName").val() || "dinosaur-regression.txt"
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', filename);
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+        }
+
+        // Download a PNG image
+        function saveImage() {
+            var image = window.chart.getImageURI();
+            window.open(imgUri);
+        }
+
+        // must be defined in Window for GoLang wasm to access
+        // In the case that we have more than 2 x, we plot residuals
+        function plotResiduals(title, residuals, result) {
+
+            var dataPoints = [["Row", "Residual"]]
+
+            // Save result in case user wants to download
+            $("#result").html(result);
+            $("#download-button").show();
+
+            $.each(residuals.split(','), function (index, number) {
+                dataPoints.push(["Row " + index, parseFloat(number)]);
+            });
+            var data = google.visualization.arrayToDataTable(dataPoints);
+            var options = {
+                title: "Residuals for model to predict: " + title,
+                legend: { position: 'none' },
+            };
+
+            chart = new google.visualization.Histogram(document.getElementById('chart_div'));
+            chart.draw(data, options);
+        }
+
+        // show a message from GoLang
+        function showMessage(message, div_id) {
+            $("#" + div_id).html(message)
+            $("#" + div_id).show()
+        }
+
+        // Hide message if all goes well!
+        function hideMessage(div_id) {
+            $("#" + div_id).hide()
+        }
+
+        // In the case that we have 2 variables, we draw line plot
+        function plotLinear(title, X, Y, predictions, headers, result) {
+
+            X = X.split(',')
+            Y = Y.split(',')
+            predictions = predictions.split(',')
+
+            // Save result in case user wants to download
+            $("#result").html(result)
+            $("#download-button").show();
+
+            headers = headers.split(',')
+            headers.push("Predictions")
+            console.log(headers)
+
+            var dataPoints = [headers]
+            $.each(X, function (index, value) {
+                dataPoints.push([value, parseFloat(Y[index]), parseFloat(predictions[index])]);
+            });
+
+            var data = google.visualization.arrayToDataTable(dataPoints);
+            var options = {
+                title: title,
+                curveType: 'function',
+                legend: { position: 'bottom' }
+            };
+
+            chart = new google.visualization.LineChart(document.getElementById('chart_div'));
+            chart.draw(data, options);
+        }
+
+
+        // Write custom text under the plot (usually the formula)
+        function describePlot(message) {
+            $("#plotText").html(message);
+        }
+
+        var starterData = [
+            ['Murders per annum per one million inhabitants',
+                'Inhabitants',
+                'Percent with incomes below $5000',
+                'Percent unemployed'],
+            [11.2, 587000, 16.5, 6.2],
+            [13.4, 643000, 20.5, 6.4],
+            [40.7, 635000, 26.3, 9.3],
+            [5.3, 692000, 16.5, 5.3],
+            [24.8, 1248000, 19.2, 7.3],
+            [12.7, 643000, 16.5, 5.9],
+            [20.9, 1964000, 20.2, 6.4],
+            [35.7, 1531000, 21.3, 7.6],
+            [8.7, 713000, 17.2, 4.9],
+            [9.6, 749000, 14.3, 6.4],
+            [14.5, 7895000, 18.1, 6.0],
+            [26.9, 762000, 23.1, 7.4],
+            [15.7, 2793000, 19.1, 5.8],
+            [36.2, 741000, 24.7, 8.6],
+            [18.1, 625000, 18.6, 6.5],
+            [28.9, 854000, 24.9, 8.3],
+            [14.9, 716000, 17.9, 6.7],
+            [25.8, 921000, 22.4, 8.6],
+            [21.7, 595000, 20.2, 8.4],
+            [25.7, 3353000, 16.9, 6.7]
+        ];
+
+
+
+
+        /*  var x_test_data = []
+         $.ajax({
+             url: "x_test_data.csv",
+             async: false,
+             success: function (csvd) {
+                 x_test_data = $.csv.toArrays(csvd);
+             },
+             dataType: "text",
+             complete: function () {
+                 console.log("x_test_data:", x_test_data)
+                 // call a function on complete 
+             }
+         });
+         console.log("2 : x_test_data:", x_test_data)
+ 
+  */
+
+
+
+
+        // Determine indices of empty strings in array, we won't add these columns
+        function getEmptyIndices(array) {
+            empty = []
+            for (var i = 0; i < array.length; i++) {
+                if (String(array[i]).replace(" ", "") === "" || array[i] == null) {
+                    empty.push(i);
+                }
+            }
+            return empty;
+        }
+
+        function updateTable(data) {
+
+            $('#data-table').empty();
+            const container = document.getElementById('data-table');
+            window.hot = new Handsontable(container, {
+                data: data,
+                rowHeaders: true,
+                colHeaders: true,
+                licenseKey: "non-commercial-and-evaluation",
+                tableClassName: ['table', 'table-hover', 'table-striped'],
+                observeChanges: true,
+                afterChange: function (r, c) {
+                    var data = this.getData();
+                    updatePlot(data);
+                }
+            });
+            updatePlot(window.hot.getData());
+        }
+        function updateTableXGB(data) {
+
+            $('#data-table-xgb').empty();
+            const container = document.getElementById('data-table-xgb');
+            window.hot = new Handsontable(container, {
+                data: starterDataXGB,
+                rowHeaders: true,
+                colHeaders: true,
+                licenseKey: "non-commercial-and-evaluation",
+                tableClassName: ['table', 'table-hover', 'table-striped'],
+                observeChanges: true,
+                afterChange: function (r, c) {
+                    var data = this.getDataXGB();
+
+                }
+            });
+
+        }
+
+
+        function updateRadios(number, selected) {
+            var number = number || 3
+            var selected = selected || 1
+
+            // If previous predictor column greater than columns, set to first
+            if (selected > number) {
+                selected = 1;
+            }
+
+            var radios = $("#radios")
+            radios.empty();
+
+            // Dynamically add radio buttons, account for predictor column
+            for (i = 1; i <= number; i++) {
+                if (selected == i) {
+                    radios.append('<div class="form-check form-check-inline radio"><input class="form-check-input" type="radio" name="predictVar" id="predictVar' + i + '" value="' + i + '" checked><label class="form-check-label" for="predictVar' + i + '">' + i + '</label>');
+                } else {
+                    radios.append('<div class="form-check form-check-inline radio"><input class="form-check-input" type="radio" name="predictVar" id="predictVar' + i + '" value="' + i + '"><label class="form-check-label" for="predictVar' + i + '">' + i + '</label>');
+                }
+            }
+
+            $(".radio").change(function () {
+                updatePlot(window.hot.getData());
+            })
+        }
+
+        function updateRegression(data) {
+
+            // Get other fields, if it's checked, and default delim
+            var isChecked = $("#headerInclude").is(":checked");
+            var delim = $("#inputDelim").val();
+            var predictCol = parseInt($("input[name='predictVar']:checked").val());
+
+            // pass along string to golang to parse, if header present, and delim
+            // Won't be ready on first page load
+            //if (typeof runRegression !== "undefined") {
+            if (typeof runXGB !== "undefined") {
+                //runRegression(data, isChecked, delim, predictCol);
+                runXGB(data, isChecked, delim, predictCol);
+
+            } else {
+                console.log("Web Assembly not loaded yet!")
+            }
+        }
+
+        // Given data, update the plot
+        function updatePlot(data) {
+
+            // Remove empty rows and columns
+            var headers = data[0];
+
+            // If a user removes a header row, it's considered empty
+            empty = getEmptyIndices(headers);
+            definedHeaders = headers.length - empty.length
+            var cleaned = [];
+
+            $.each(data, function (rowKey, row) {
+
+                var filtered = row.filter(function (value, index, arr) {
+                    return !empty.includes(index);
+                });
+
+                // The row must be fully defined (same length as headers)
+                if (definedHeaders == filtered.length) {
+                    cleaned.push(filtered);
+                }
+            });
+
+            // Function expects a string joined by delim
+            var delim = $("#inputDelim").val();
+
+            // Update radios with number of columns, and last selected
+            var predictCol = parseInt($("input[name='predictVar']:checked").val());
+            var cols = 0;
+            stringData = ""
+            $.each(cleaned, function (i, row) {
+                stringData += row.join(delim) + "\n"
+                cols = row.length;
+            })
+            updateRadios(cols, predictCol)
+            updateRegression(stringData);
+        }
+
+
+        if (WebAssembly) {
+
+            // WebAssembly.instantiateStreaming is not currently available in Safari
+            if (WebAssembly && !WebAssembly.instantiateStreaming) { // polyfill
+                WebAssembly.instantiateStreaming = async (resp, importObject) => {
+                    const source = await (await resp).arrayBuffer();
+                    return await WebAssembly.instantiate(source, importObject);
+                };
+            }
+
+            const go = new Go();
+            WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject).then((result) => {
+                go.run(result.instance);
+            });
+        } else {
+            console.log("WebAssembly is not supported in your browser")
+        }
+
+        $(document).ready(function () {
+
+            $("#csvInput").change(function () {
+                // Check that ends with csv
+
+                var file = $('#csvInput').prop('files')[0];
+                var reader = new FileReader();
+
+                reader.onload = function (event) {
+
+                    // Use arrays in javascript for table, update it
+                    data = $.csv.toArrays(event.target.result);
+                    updateTable(data);
+
+
+                    // call function to get checked, delim, and run regression
+                    updateRegression(event.target.result);
+
+                }
+
+                // Read in the csv file
+                reader.readAsText(file)
+            })
+
+            // Small delay to let web assembly load
+            setTimeout(function () {
+                updateTable(starterData);
+
+            }, 1000);
+
+            if (typeof console != "undefined")
+                if (typeof console.log != 'undefined')
+                    console.olog = console.log;
+                else
+                    console.olog = function () { };
+
+            console.log = function (message) {
+                console.olog(message);
+                $('#debugDiv').append('<p>' + message + '</p>');
+            };
+            console.error = console.debug = console.info = console.log
+        })
+    </script>
+</body>
+
+</html>
