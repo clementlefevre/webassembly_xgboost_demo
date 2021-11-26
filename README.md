@@ -34,12 +34,7 @@ $ make
 $ cp "$(go env GOROOT)/misc/wasm/wasm_exec.js" ./demo
 ```
 
-### And cd into the "demo" folder and start a server to see the result.
-
-```bash
-$ cd demo
-$ python -m http.server 9999
-```
+### And cd into the "demo" folder and execute `sheret.exe` (Windows users) to start a local server.
 
 ### Open the browser to http://localhost:9999
 
